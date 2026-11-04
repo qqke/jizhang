@@ -9,7 +9,7 @@ npm ci
 npm run dev
 ```
 
-`.env.production` 中的 Supabase 地址和 publishable key 是浏览器公开配置，不是服务端密钥。开发环境可从 `.env.production` 复制到 `.env.local`。数据库结构记录在 `supabase/schema.sql`；当前项目已经部署该结构。
+`.env.production` 中的 Supabase 地址和 publishable key 是浏览器公开配置，不是服务端密钥。开发环境可从 `.env.production` 复制到 `.env.local`。数据库结构记录在 `supabase/schema.sql` 和 `supabase/members.sql`；当前项目已经部署这两部分。
 
 ## GitHub Pages
 
@@ -20,3 +20,7 @@ GitHub Pages 仅供测试，商业 SaaS 上线前需迁移至允许商业运营�
 ## 数据安全
 
 账本相关表启用行级安全策略。创建账本、签发邀请和加入账本通过受限数据库函数完成；邀请链接有效期为七天且仅能使用一次。成员可以管理共享账本中的收支和预算。不要把 Supabase secret 或 service-role 密钥放入前端。
+
+## 家庭协作与数据备份
+
+账本成员可查看成员列表和各自退出；创建者可移除其他成员，但不能退出或移除自己。设置页支持导出整个账本的 CSV，账目页支持按备注、金额、类型和分类筛选。
