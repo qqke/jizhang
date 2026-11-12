@@ -9,7 +9,7 @@ npm ci
 npm run dev
 ```
 
-`.env.production` 中的 Supabase 地址和 publishable key 是浏览器公开配置，不是服务端密钥。开发环境可从 `.env.production` 复制到 `.env.local`。数据库结构记录在 `supabase/schema.sql` 和 `supabase/members.sql`；当前项目已经部署这两部分。
+`.env.production` 中的 Supabase 地址和 publishable key 是浏览器公开配置，不是服务端密钥。开发环境可从 `.env.production` 复制到 `.env.local`。新数据库按顺序执行 `supabase/schema.sql`、`supabase/members.sql` 和 `supabase/merchants.sql`。已部署前两份 SQL 的数据库只需执行 `supabase/merchants.sql` 即可启用店铺字段。
 
 ## GitHub Pages
 
