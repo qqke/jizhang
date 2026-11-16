@@ -31,7 +31,7 @@ export function ReceiptScanner({ onResult, onBusy, disabled = false }: Props) {
   const interruption = new Promise<never>((_, reject) => { rejectJob = reject })
   const cancel = () => { stopped = true; rejectJob(new Error('cancelled')); void worker?.terminate() }
   cancelRef.current = cancel
-  setPreview(URL.createObjectURL(file)); setText(''); setMessage('正在准备识别，首次使用需要下载识别模型…')
+  setPreview(''); setText(''); setMessage('正在准备识别，首次使用需要下载识别模型…')
   setBusy(true); onBusy(true); setProgress(0)
   const timeout = window.setTimeout(() => rejectJob(new Error('timeout')), 120000)
   try {
@@ -41,15 +41,16 @@ export function ReceiptScanner({ onResult, onBusy, disabled = false }: Props) {
     try {
      if (stopped) throw new Error('cancelled')
      if (bitmap.width * bitmap.height > 50000000) throw new Error('oversize')
-     const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height))
-     canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale)
+     const scale = Math.min(1, 2200 / Math.max(bitmap.width, bitmap.height), Math.sqrt(1600000 / (bitmap.width * bitmap.height)))
+     canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale))
      const ctx = canvas.getContext('2d')
      if (!ctx) throw new Error('canvas')
      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height)
      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
     } finally { bitmap.close() }
-    const image = await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('image')), 'image/png'))
+    const image = await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('image')), 'image/jpeg', 0.9)).finally(() => { canvas.width = 0; canvas.height = 0 })
     if (stopped) throw new Error('cancelled')
+    setPreview(URL.createObjectURL(image))
     worker = new Worker(new URL('./receipt-worker.ts', import.meta.url), { type: 'module' })
     const result = new Promise<string>((resolve, reject) => {
      worker!.onmessage = (event: MessageEvent<{ progress?: number; text?: string; error?: boolean }>) => {
