@@ -1,0 +1,34 @@
+name: Compare ledger web startup
+on:
+  push:
+    branches: [experiment/nsh-startup-20261118]
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false playwright-core@1.55.0
+      - name: Prepare Native Shell 0.6.0
+        run: |
+          curl -fsSL --retry 3 https://github.com/longbridge/nsh/releases/download/v0.6.0/nsh-linux-x86_64.tar.gz -o "$RUNNER_TEMP/nsh.tar.gz"
+          curl -fsSL --retry 3 https://github.com/longbridge/nsh/releases/download/v0.6.0/nsh-linux-x86_64.tar.gz.sha256 -o "$RUNNER_TEMP/checksum"
+          test "$(sha256sum "$RUNNER_TEMP/nsh.tar.gz" | cut -d' ' -f1)" = "$(awk '{print $1}' "$RUNNER_TEMP/checksum")"
+          mkdir -p "$RUNNER_TEMP/nsh"
+          tar -xzf "$RUNNER_TEMP/nsh.tar.gz" -C "$RUNNER_TEMP/nsh"
+          binary=$(find "$RUNNER_TEMP/nsh" -type f -name nsh -executable | head -1)
+          echo "$(dirname "$binary")" >> "$GITHUB_PATH"
+      - name: Package equal screens
+        run: |
+          nsh init "$RUNNER_TEMP/book" --template ts
+          cp bench/nsh.tsx "$RUNNER_TEMP/book/App.tsx"
+          (cd "$RUNNER_TEMP/book" && nsh package App.tsx --target web --out "$GITHUB_WORKSPACE/bench/out-nsh")
+          npx --no-install vite build bench/react --base=/ --outDir ../out-react
+      - run: node bench/compare.mjs
