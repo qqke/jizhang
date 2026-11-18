@@ -1,0 +1,29 @@
+name: Measure cached ledger startup
+on:
+  push:
+    branches: [experiment/cached-ledger-startup]
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build previous and candidate PWA
+        run: |
+          mkdir -p "$RUNNER_TEMP/original"
+          git archive aeefc781d1a701bf659176db7880f3a4b5136949 | tar -x -C "$RUNNER_TEMP/original"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/original/node_modules"
+          (cd "$RUNNER_TEMP/original" && VITE_SUPABASE_URL=http://127.0.0.1:4181 npm run build)
+          VITE_SUPABASE_URL=http://127.0.0.1:4182 npm run build
+      - run: npm install --no-save --package-lock=false playwright-core@1.55.0
+      - run: node bench/startup.mjs "$RUNNER_TEMP/original/dist" dist
