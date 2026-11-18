@@ -70,7 +70,7 @@ try{
    if(j===1&&k===1&&n===0){
     await page.getByRole('button',{name:'记一笔',exact:true}).click()
     await page.getByRole('button',{name:'扫描小票',exact:true}).click()
-    await page.getByRole('button',{name:/拍照/}).waitFor()
+    await page.getByRole('button',{name:'拍摄小票',exact:true}).waitFor()
     await page.getByRole('button',{name:'关闭',exact:true}).click()
     for(const tab of ['账目','统计','设置','首页']) await page.getByRole('button',{name:tab,exact:true}).click()
    }
