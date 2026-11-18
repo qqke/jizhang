@@ -26,7 +26,7 @@ test('installed PWA survives offline relaunch and replays ambiguous writes exact
  const cleanup = []
  t.after(async()=>{for(const close of cleanup.reverse())await close()})
  const dir = await mkdtemp(join(tmpdir(), 'chaimi-pwa-'))
- cleanup.push(() => rm(dir, { recursive: true, force: true }))
+ cleanup.push(() => rm(dir, { recursive: true, force: true, maxRetries: 6, retryDelay: 200 }))
  const dist = join(dir, 'dist')
  const owner = '00000000-0000-4000-8000-000000000001'
  const book = '00000000-0000-4000-8000-000000000002'
