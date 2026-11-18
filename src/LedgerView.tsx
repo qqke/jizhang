@@ -12,6 +12,11 @@ const categoryIcons = {
 }
 export const categories = Object.keys(categoryIcons)
 const yen = new Intl.NumberFormat('ja-JP')
+let weekday: Intl.DateTimeFormat | undefined
+function weekdayLabel(date: string) {
+  weekday ??= new Intl.DateTimeFormat('zh-CN', { weekday: 'short' })
+  return weekday.format(new Date(date + 'T12:00:00'))
+}
 export const money = (amount: number) => `¥${yen.format(amount)}`
 
 export function CategoryIcon({ name }: { name: string }) {
@@ -36,7 +41,7 @@ export function Records<T extends LedgerEntry & { id: string }>({ entries, edit,
   return <div className="records">{Array.from(days, ([date, rows]) =>
     <section key={date} className="record-day">
       <h3><time dateTime={date}>{Number(date.slice(5, 7))}月{Number(date.slice(8))}日</time>
-        <span>{new Date(date + 'T12:00:00').toLocaleDateString('zh-CN', { weekday: 'short' })}</span></h3>
+        <span>{weekdayLabel(date)}</span></h3>
       {rows.map(entry => <button className="record" key={entry.id} onClick={() => edit(entry)}>
         <CategoryIcon name={entry.category}/>
         <span className="record-name"><strong>{entry.merchant || entry.category}</strong>

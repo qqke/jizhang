@@ -20,7 +20,7 @@ function Bootstrap() {
  const [session, setSession] = useState(savedIdentity)
  const [client, setClient] = useState<Client | null>(null)
  const [verified, setVerified] = useState('')
- const [ready, setReady] = useState(() => Boolean(savedIdentity()) || !url || !key)
+ const [ready, setReady] = useState(() => Boolean(session) || !url || !key || (!location.search && !location.hash))
  const [recovery, setRecovery] = useState(false)
  const [online, setOnline] = useState(navigator.onLine)
  useEffect(() => {
@@ -33,7 +33,7 @@ function Bootstrap() {
   if (!url || !key) return
   let active = true
   let unsubscribe: (() => void) | undefined
-  import('./cloud').then(({ cloud }) => {
+  const connect = () => import('./cloud').then(({ cloud }) => {
    if (!active || !cloud) return
    setClient(cloud)
    const { data } = cloud.auth.onAuthStateChange((event, current) => {
@@ -47,7 +47,12 @@ function Bootstrap() {
    })
    unsubscribe = () => data.subscription.unsubscribe()
   }).catch(() => { if (active) setReady(true) })
-  return () => { active = false; unsubscribe?.() }
+  let cancelIdle: (() => void) | undefined
+  if (session && !location.search && !location.hash && 'requestIdleCallback' in window) {
+   const id = window.requestIdleCallback(connect, { timeout: 300 })
+   cancelIdle = () => window.cancelIdleCallback(id)
+  } else void connect()
+  return () => { active = false; cancelIdle?.(); unsubscribe?.() }
  }, [])
  if (!ready) return <div className="loading">正在打开柴米账本…</div>
  return <App key={session?.user.id || 'login'} session={session}
@@ -72,9 +77,10 @@ function App({ session, db, online, recovery, finishRecovery }: {
  const [editing,setEditing]=useState<Entry|null>(null), [kind,setKind]=useState<'expense'|'income'>('expense'), [amount,setAmount]=useState(''), [category,setCategory]=useState(categories[0]), [note,setNote]=useState(''), [date,setDate]=useState(localDate()), [bookName,setBookName]=useState(''), [invite,setInvite]=useState('')
  const [merchant,setMerchant]=useState(''), [customMerchant,setCustomMerchant]=useState(false), [merchants,setMerchants]=useState<string[]>([])
  useEffect(()=>{
+  if(modal!=='entry'||!book)return
   const cacheKey='jz:merchants:'+owner+':'+book?.id
   setMerchants(readPreference<string[]>(cacheKey,[]))
-  if(!db||!book||!online||modal!=='entry')return
+  if(!db||!online)return
   let active=true
   void db.rpc('jz_list_merchants',{book:book.id}).then(({data,error})=>{
    if(active&&!error){setMerchants(data ?? []);writePreference(cacheKey,data ?? [])}
@@ -104,12 +110,16 @@ function App({ session, db, online, recovery, finishRecovery }: {
  useEffect(()=>{ setInvite(''); setMembers([]); if(book&&page==='settings'&&online)void loadMembers() },[book?.id,page,db,online])
  async function removeMember(member:Member) { if(!db||!book||!session)return; const self=member.user_id===session.user.id; if(!confirm(self?'确定退出这个家庭账本吗？退出后将无法查看账本。':`确定移除 ${member.email} 吗？移除后对方将无法访问账本。`))return; const {error}=await db.rpc('jz_remove_member',{book:book.id,member:member.user_id}); if(error){setNotice('操作失败，请重试。');return} if(self){setBook(null);void loadBooks()}else void loadMembers(); setNotice(self?'已退出账本。':'已移除成员。') }
  async function exportEntries() { if(!book||!db||!online)return; setExporting(true); try { const rows=await navigator.locks.request('chaimi-sync:'+owner,async()=>{let rows=await remoteEntries(db,book.id);for(const change of await queued(owner))if(change.entry.book_id===book.id)rows=applyChange(rows,change);return rows.sort((a,b)=>b.occurred_on.localeCompare(a.occurred_on))}); const file=new Blob([csvText(rows)],{type:'text/csv;charset=utf-8'}); const href=URL.createObjectURL(file); const link=document.createElement('a'); link.href=href; link.download=`柴米账本-${localDate()}.csv`; link.click(); setTimeout(()=>URL.revokeObjectURL(href),1000); setNotice(`已导出 ${rows.length} 条记录。`) } catch { setNotice('导出失败，请检查网络后重试。') } finally {setExporting(false)} }
- const filtered=useMemo(()=>filterEntries(entries,query,kindFilter,categoryFilter),[entries,query,kindFilter,categoryFilter])
+ const filtered=useMemo(()=>page==='records'?filterEntries(entries,query,kindFilter,categoryFilter):[],[page,entries,query,kindFilter,categoryFilter])
 
- const expense=entries.filter(e=>e.kind==='expense').reduce((a,e)=>a+e.amount,0), income=entries.filter(e=>e.kind==='income').reduce((a,e)=>a+e.amount,0)
+ const {expense,income}=useMemo(()=>{
+  let expense=0, income=0
+  for(const entry of entries){if(entry.kind==='expense')expense+=entry.amount;else income+=entry.amount}
+  return {expense,income}
+ },[entries])
  const [expenseCategory,setExpenseCategory]=useState('')
  const merchantKey = `jz:last-merchant:${session?.user.id}:${book?.id}`
- const groups=useMemo(()=>categories.map(name=>({name,total:entries.filter(e=>e.kind==='expense'&&e.category===name).reduce((a,e)=>a+e.amount,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total),[entries])
+ const groups=useMemo(()=>page!=='stats'?[]:categories.map(name=>({name,total:entries.filter(e=>e.kind==='expense'&&e.category===name).reduce((a,e)=>a+e.amount,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total),[page,entries])
  async function auth(e:React.FormEvent) { e.preventDefault(); if(!db)return; setBusy(true); setNotice(''); let error; if(authMode==='login') ({error}=await db.auth.signInWithPassword({email,password})); else if(authMode==='signup') { const r=await db.auth.signUp({email,password,options:{emailRedirectTo:location.href}}); error=r.error; if(!error)setNotice('注册成功，请检查邮箱中的确认邮件。') } else if(authMode==='forgot') { const r=await db.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});error=r.error;if(!error)setNotice('重置链接已发送，请检查邮箱。') } else { const r=await db.auth.updateUser({password});error=r.error;if(!error){setNotice('密码已更新。');finishRecovery();setAuthMode('login')} } if(error)setNotice(error.message); setBusy(false) }
  function editEntry(e?:Entry) {setScanOpen(false);setScanning(false);setNotice('');setEditing(e||null);setKind(e?.kind||'expense');setAmount(e?String(e.amount):'');setCategory(e?.category||categories[0]);setNote(e?.note||'');let lastMerchant='';if(!e){try{lastMerchant=localStorage.getItem(merchantKey)||''}catch{}}setMerchant(e?e.merchant:lastMerchant);setCustomMerchant(false);setDate(e?.occurred_on||localDate());setModal('entry')}
  async function persistEntry(action: 'insert' | 'update' | 'delete', entry: Entry) {

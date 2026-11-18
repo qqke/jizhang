@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { acknowledge, cacheMonth, queued, readMonth, watchLocal, type Entry, type Queued } from './local-ledger'
 
@@ -37,8 +37,8 @@ export function useLocalLedger(db: SupabaseClient | null, owner: string, book: s
  const run = useRef<(pull?: boolean) => void>(() => {})
  const scope = JSON.stringify([owner, book, month])
  const [viewScope, setViewScope] = useState('')
- useEffect(() => {
-  if (!owner) return
+ useLayoutEffect(() => {
+  if (!owner || !book) return
   let active = true, readId = 0
   const reload = async () => {
    const id = ++readId
