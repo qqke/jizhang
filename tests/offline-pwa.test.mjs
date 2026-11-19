@@ -126,6 +126,18 @@ test('installed PWA survives offline relaunch and replays ambiguous writes exact
  }
  await network(true)
  await until(()=>visible('离线模式'),'Offline status missing')
+ await click('.sidebar nav button:last-child')
+ await until(()=>visible('主题颜色'), 'Theme choices missing in offline settings')
+ const options = await evaluate("Array.from(document.querySelectorAll('.theme-option input'), input => input.value)")
+ assert.deepEqual(options, ['sage', 'rose', 'blue', 'lilac', 'apricot'])
+ for (const id of [...options, 'rose']) {
+  const radio = '.theme-option input[value="' + id + '"]'
+  await click(radio)
+  await until(()=>evaluate(`document.querySelector('${radio}').checked &&
+   getComputedStyle(document.querySelector('.sidebar .brand-mark')).backgroundColor ===
+   getComputedStyle(document.querySelector('${radio}').nextElementSibling).backgroundColor`), 'Theme failed to apply: ' + id)
+ }
+ await click('.sidebar nav button:first-child')
  await click('button[aria-label="上个月"]')
  await until(()=>visible('本机尚无这个月的完整记录'),'Unknown offline month was presented as empty')
  assert.equal(await visible('¥0'), false)
@@ -145,6 +157,8 @@ test('installed PWA survives offline relaunch and replays ambiguous writes exact
  await amount('567')
  await reopen()
  await until(()=>visible('待同步 2 项更改'),'Lost queue on offline reload')
+ assert.equal(await evaluate("getComputedStyle(document.querySelector('.overview-main')).backgroundColor"), 'rgb(132, 54, 83)')
+ assert.equal(await evaluate("document.querySelector('meta[name=theme-color]').content"), '#fcf6f8')
  assert.ok(await visible('¥1,234'))
  assert.ok(await visible('¥567'))
  // Edit and delete while offline, then restart once more before replay.
