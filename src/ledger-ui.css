@@ -160,3 +160,35 @@ input::placeholder { color: #758478; }
   .auth-form { min-height: 100dvh; }
   .auth-box > .brand { margin-bottom: 32px; }
 }
+.draft-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; color: var(--muted); font-size: 13px; }
+.draft-note button { min-height: 44px; color: var(--leaf); text-decoration: underline; }
+.more-records { margin-inline: 12px; }
+.month-placeholder { text-align: center; color: var(--muted); }
+.month-placeholder strong { font-size: 28px; }
+.record[data-saved] { box-shadow: inset 3px 0 var(--leaf); }
+@media (prefers-reduced-motion: no-preference) {
+  .dialog[open] { animation: dialog-in 180ms ease-out both; }
+  .dialog[open]::backdrop, .expense-details { animation: reveal 160ms ease-out both; }
+  .dialog[data-closing] { animation: dialog-out 120ms ease-in both; }
+  .dialog[data-closing]::backdrop { animation: reveal 120ms ease-in reverse both; }
+  .expense-category svg, .scan-toggle svg:last-child { transition: transform 140ms ease; }
+  .record[data-saved] { animation: record-saved 1200ms ease-out both; }
+}
+@media (max-width: 760px) {
+  .dialog { --dialog-travel: 16px; }
+}
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(var(--dialog-travel, 4px)); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes dialog-out {
+  to { opacity: 0; transform: translateY(var(--dialog-travel, 4px)); }
+}
+@keyframes reveal { from { opacity: 0; } to { opacity: 1; } }
+@keyframes record-saved { from { background-color: #d8ecd7; } to { background-color: transparent; } }
+
+.saved-toast { position: fixed; z-index: 5; inset: auto 20px 20px auto; max-width: calc(100% - 32px); display: flex; align-items: center; gap: 8px; padding: 0 4px 0 14px; border-radius: 12px; background: var(--ink); color: white; box-shadow: 0 3px 14px #193e3026; font-size: 14px; }
+.saved-toast button { display: grid; place-items: center; color: inherit; width: 44px; height: 44px; }
+@media (max-width: 760px) {
+  .saved-toast { inset: auto 16px calc(76px + env(safe-area-inset-bottom)) auto; }
+}

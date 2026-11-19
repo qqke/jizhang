@@ -28,8 +28,8 @@ export function Empty({ text }: { text: string }) {
   return <div className="empty"><ReceiptText aria-hidden="true" size={26}/><strong>{text}</strong></div>
 }
 
-export function Records<T extends LedgerEntry & { id: string }>({ entries, edit, emptyText = '这个月还没有记录' }: {
-  entries: T[]; edit: (entry: T) => void; emptyText?: string
+export function Records<T extends LedgerEntry & { id: string }>({ entries, edit, highlightId, emptyText = '这个月还没有记录' }: {
+  entries: T[]; edit: (entry: T) => void; emptyText?: string; highlightId?: string
 }) {
   if (!entries.length) return <div className="records"><Empty text={emptyText}/></div>
   const days = new Map<string, T[]>()
@@ -42,7 +42,7 @@ export function Records<T extends LedgerEntry & { id: string }>({ entries, edit,
     <section key={date} className="record-day">
       <h3><time dateTime={date}>{Number(date.slice(5, 7))}月{Number(date.slice(8))}日</time>
         <span>{weekdayLabel(date)}</span></h3>
-      {rows.map(entry => <button className="record" key={entry.id} onClick={() => edit(entry)}>
+      {rows.map(entry => <button className="record" data-saved={entry.id === highlightId || undefined} key={entry.id} onClick={() => edit(entry)}>
         <CategoryIcon name={entry.category}/>
         <span className="record-name"><strong>{entry.merchant || entry.category}</strong>
           {(entry.merchant || entry.note) && <small>{[entry.merchant && entry.category, entry.note].filter(Boolean).join(' · ')}</small>}
@@ -97,7 +97,7 @@ export function AuthIllustration() {
   </div>
 }
 
-export function LedgerDialog({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
+export function LedgerDialog({ title, close, closing, children }: { title: string; closing: boolean; close: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null)
   useLayoutEffect(() => {
     const dialog = ref.current!
@@ -110,7 +110,7 @@ export function LedgerDialog({ title, close, children }: { title: string; close:
     document.body.style.overflow = 'hidden'
     return () => { dialog.close(); document.body.style.overflow = overflow; previous?.focus({ preventScroll: true }) }
   }, [])
-  return <dialog ref={ref} className="dialog" aria-labelledby="dialog-title"
+  return <dialog ref={ref} className="dialog" inert={closing} data-closing={closing || undefined} aria-labelledby="dialog-title"
     onCancel={event => { event.preventDefault(); close() }}
     onClick={event => { if (event.target === ref.current) {
       const rect = ref.current.getBoundingClientRect()

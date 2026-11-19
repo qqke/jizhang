@@ -102,5 +102,5 @@ export function useLocalLedger(db: SupabaseClient | null, owner: string, book: s
   return () => { active = false; run.current = () => {}; clearInterval(timer); document.removeEventListener('visibilitychange', retry) }
  }, [db, owner, book, month, online])
  const current = viewScope === scope ? view : { entries: [], budget: null, pending: 0, complete: false }
- return { ...current, issue, refresh: () => run.current(true), upload: () => run.current() }
+ return { ...current, localReady: viewScope === scope, issue, refresh: () => run.current(true), upload: () => run.current() }
 }

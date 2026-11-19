@@ -111,8 +111,11 @@ test('installed PWA survives offline relaunch and replays ambiguous writes exact
   disconnected=offline
   await call('Network.emulateNetworkConditions',{offline,latency:0,downloadThroughput:-1,uploadThroughput:-1})
  }
- async function amount(value) {
+ async function typeAmount(value) {
   await evaluate("(()=>{const e=document.querySelector('.amount-field input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,"+JSON.stringify(value)+");e.dispatchEvent(new Event('input',{bubbles:true}))})()")
+ }
+ async function amount(value) {
+  await typeAmount(value)
   await click('.entry-save button')
   await until(()=>evaluate('!document.querySelector("dialog")'),'Local save did not finish')
  }
@@ -123,9 +126,22 @@ test('installed PWA survives offline relaunch and replays ambiguous writes exact
  }
  await network(true)
  await until(()=>visible('离线模式'),'Offline status missing')
+ await click('button[aria-label="上个月"]')
+ await until(()=>visible('本机尚无这个月的完整记录'),'Unknown offline month was presented as empty')
+ assert.equal(await visible('¥0'), false)
+ await click('button[aria-label="下个月"]')
  await click('.top-add')
+ await typeAmount('1234')
+ await click('.dialog-head button')
+ await until(()=>evaluate('!document.querySelector("dialog")'),'Entry did not close')
+ await click('.top-add')
+ assert.equal(await evaluate("document.querySelector('.amount-field input').value"), '1234')
+ assert.ok(await visible('已恢复上次填写的内容'))
  await amount('1234')
+ assert.ok(await visible('已记支出 ¥1,234 · 已存本机'))
+ await until(()=>evaluate('Boolean(document.querySelector(".record[data-saved]"))'),'Saved record was not marked')
  await click('.top-add')
+ assert.equal(await evaluate("document.querySelector('.amount-field input').value"), '')
  await amount('567')
  await reopen()
  await until(()=>visible('待同步 2 项更改'),'Lost queue on offline reload')

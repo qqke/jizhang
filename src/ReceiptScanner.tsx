@@ -71,7 +71,7 @@ export function ReceiptScanner({ onResult, onBusy, disabled = false }: Props) {
    const draft = parseReceipt(raw)
    setText(raw); onResult(draft)
    const missing = [!draft.amount && '金额', !draft.date && '日期'].filter(Boolean)
-   setMessage(missing.length ? `未能确定${missing.join('和')}，请手动补充，并核对下方信息。` : '已填入识别结果，请核对金额、日期和分类后保存。')
+   setMessage(missing.length ? `未能确定${missing.join('和')}，请核对表单并补充缺失信息。` : '识别完成，已保留手填内容。请核对金额、日期和店铺后保存。')
   } catch (error) {
    if (stopped) return
    setMessage(error instanceof Error && error.message === 'timeout'
