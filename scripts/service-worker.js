@@ -5,7 +5,11 @@ const assets = new Set((/* ASSETS */ []).map(file => new URL(file, root).href))
 const index = new URL('index.html', root).href
 
 self.addEventListener('install', event => {
- event.waitUntil(caches.open(version).then(cache => cache.addAll([...assets].map(url => new Request(url, { cache: 'reload' })))))
+ // Build assets have content hashes and can reuse downloads from the page or previous build.
+ const requests = [...assets].map(url => url.startsWith(root + 'assets/')
+  ? new Request(url, { cache: 'force-cache' })
+  : new Request(url, { cache: 'reload' }))
+ event.waitUntil(caches.open(version).then(cache => cache.addAll(requests)))
 })
 self.addEventListener('activate', event => {
  event.waitUntil((async () => {

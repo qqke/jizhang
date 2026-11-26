@@ -69,13 +69,20 @@ export async function readMonth(owner: string, book: string, month: string) {
  const [snapshot, changes] = await Promise.all([
   result<Month | undefined>(tx.objectStore('months').get([owner, book, month])), queueFor(tx, owner),
  ])
- const rows = new Map((snapshot?.entries || []).map(entry => [entry.id, entry]))
+ const entries = snapshot?.entries ?? []
+ const metadata = { budget: snapshot?.budget ?? null, pending: changes.length, complete: snapshot?.complete === true }
+ if (!changes.length) {
+  // IndexedDB returns a fresh copy. Cloud snapshots are usually already ordered.
+  if (entries.some((entry, index) => index > 0 && latestFirst(entries[index - 1], entry) > 0)) entries.sort(latestFirst)
+  return { entries, ...metadata }
+ }
+ const rows = new Map(entries.map(entry => [entry.id, entry]))
  for (const { entry, action } of changes) {
   if (entry.book_id !== book) continue
   rows.delete(entry.id)
   if (action !== 'delete' && entry.occurred_on.startsWith(month + '-')) rows.set(entry.id, entry)
  }
- return { entries: [...rows.values()].sort(latestFirst), budget: snapshot?.budget ?? null, pending: changes.length, complete: snapshot?.complete === true }
+ return { entries: [...rows.values()].sort(latestFirst), ...metadata }
 }
 export async function cacheMonth(owner: string, book: string, month: string, snapshot: Month) {
  const tx = (await database()).transaction('months', 'readwrite')

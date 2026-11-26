@@ -3,19 +3,21 @@ import { createRoot } from 'react-dom/client'
 import { savedIdentity, url, key, type Identity } from './connection'
 import { enqueue, queued, applyChange, readPreference, writePreference, type Book, type Entry } from './local-ledger'
 import { changeMonth, remoteEntries, useLocalLedger } from './useLocalLedger'
-import { BarChart3, BookOpen, CalendarDays, Check, ChevronLeft, ChevronRight, Home, LogOut, Plus, ScanLine, Settings, Trash2, Users, X } from 'lucide-react'
+import { BarChart3, BookOpen, CalendarDays, Check, ChevronLeft, ChevronRight, Home, Plus, ScanLine, Settings, Trash2, X } from 'lucide-react'
 import { categoriesFor, entryCategories, entryForm, fillReceipt, switchKind, type EntryForm } from './entry-form'
 import { filterEntries, csvText, sumEntries } from './ledger'
 
-import { ThemePicker, useDeviceTheme } from './ThemePicker'
-import { AuthIllustration, CategoryIcon, Empty, LedgerDialog, Overview, Records, money } from './LedgerView'
+import { useDeviceTheme } from './ThemePicker'
+import { AuthIllustration, CategoryIcon, LedgerDialog, Overview, Records, money } from './LedgerView'
+import type { Member } from './SettingsPage'
 import './style.css'
 import './ledger-ui.css'
 
 const ReceiptScanner = React.lazy(() => import('./ReceiptScanner').then(m => ({ default: m.ReceiptScanner })))
+const SettingsPage = React.lazy(() => import('./SettingsPage'))
+const StatsPage = React.lazy(() => import('./StatsPage'))
 type Client = NonNullable<typeof import('./cloud').cloud>
 
-type Member = { user_id: string; email: string; joined_at: string; is_owner: boolean }
 const localDate = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
 const monthLabel = (m: string) => `${m.slice(0,4)} 年 ${Number(m.slice(5,7))} 月`
 function Bootstrap() {
@@ -51,11 +53,28 @@ function Bootstrap() {
    unsubscribe = () => data.subscription.unsubscribe()
   }).catch(() => { if (active) setReady(true) })
   let cancelIdle: (() => void) | undefined
-  if (session && !location.search && !location.hash && 'requestIdleCallback' in window) {
-   const id = window.requestIdleCallback(connect, { timeout: 300 })
-   cancelIdle = () => window.cancelIdleCallback(id)
-  } else void connect()
-  return () => { active = false; cancelIdle?.(); unsubscribe?.() }
+  const localLaunch = session && !location.search && !location.hash
+  const schedule = () => {
+   if (!localLaunch) { void connect(); return }
+   if ('requestIdleCallback' in window) {
+    const id = window.requestIdleCallback(connect, { timeout: 300 })
+    cancelIdle = () => window.cancelIdleCallback(id)
+   } else {
+    const frame = requestAnimationFrame(() => {
+     const timer = window.setTimeout(connect, 0)
+     cancelIdle = () => window.clearTimeout(timer)
+    })
+    cancelIdle = () => cancelAnimationFrame(frame)
+   }
+  }
+  if (!localLaunch || navigator.onLine) schedule()
+  else window.addEventListener('online', schedule, { once: true })
+  return () => {
+   active = false
+   window.removeEventListener('online', schedule)
+   cancelIdle?.()
+   unsubscribe?.()
+  }
  }, [])
  if (!ready) return <div className="loading">正在打开柴米账本…</div>
  return <App appearance={appearance} key={session?.user.id || 'login'} session={session}
@@ -169,19 +188,11 @@ function App({ appearance, session, db, online, recovery, finishRecovery }: {
 
  const {expense,income}=useMemo(()=>sumEntries(entries),[entries])
  const subtotals=useMemo(()=>sumEntries(filtered),[filtered])
- const filterCategories=useMemo(()=>[...new Set([
+ const filterCategories=useMemo(()=>page==='records'?[...new Set([
   ...entryCategories.expense, ...entryCategories.income, ...entries.map(entry=>entry.category),
- ])],[entries])
+ ])]:[],[page,entries])
  const [expenseCategory,setExpenseCategory]=useState('')
  const merchantKey = `jz:last-merchant:${session?.user.id}:${book?.id}`
- const groups=useMemo(()=>{
-  if(page!=='stats')return []
-  const totals=new Map<string,number>()
-  for(const entry of entries)if(entry.kind==='expense'){
-   totals.set(entry.category,(totals.get(entry.category)??0)+entry.amount)
-  }
-  return Array.from(totals,([name,total])=>({name,total})).sort((a,b)=>b.total-a.total)
- },[page,entries])
  async function auth(e:React.FormEvent) { e.preventDefault(); if(!db)return; setBusy(true); setNotice(''); let error; if(authMode==='login') ({error}=await db.auth.signInWithPassword({email,password})); else if(authMode==='signup') { const r=await db.auth.signUp({email,password,options:{emailRedirectTo:location.href}}); error=r.error; if(!error)setNotice('注册成功，请检查邮箱中的确认邮件。') } else if(authMode==='forgot') { const r=await db.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});error=r.error;if(!error)setNotice('重置链接已发送，请检查邮箱。') } else { const r=await db.auth.updateUser({password});error=r.error;if(!error){setNotice('密码已更新。');finishRecovery();setAuthMode('login')} } if(error)setNotice(error.message); setBusy(false) }
  function editEntry(entry?: Entry) {
   if (!book) return
@@ -258,28 +269,21 @@ function App({ appearance, session, db, online, recovery, finishRecovery }: {
  const hasFilters = Boolean(query || kindFilter !== 'all' || categoryFilter !== 'all')
  function clearFilters() { setQuery(''); setKindFilter('all'); setCategoryFilter('all') }
  const nav=[{id:'home',label:'首页',icon:Home},{id:'records',label:'账目',icon:BookOpen},{id:'stats',label:'统计',icon:BarChart3},{id:'settings',label:'设置',icon:Settings}] as const
- return <div className="app"><aside className="sidebar"><Brand/><div className="workspace"><span className="workspace-icon"><Home size={18}/></span><span><small>当前账本</small><strong>{book?.name||'我的家庭'}</strong></span></div><nav>{nav.map(n=><button key={n.id} className={page===n.id?'active':''} aria-current={page===n.id?'page':undefined} onClick={()=>navigate(n.id)}><n.icon size={19}/>{n.label}</button>)}</nav><div className="sidebar-bottom"><span className="avatar">家</span><span><strong>家庭成员</strong><small>{session.user.email}</small></span></div></aside><main className="main"><header className="topbar"><div className="mobile-brand"><Brand/></div><span className="mobile-book">{book?.name}</span><div className="top-title">{page==='home'?'账本总览':page==='records'?'收支明细':page==='stats'?'收支统计':'账本设置'} <span>/ {book?.name||'我的家庭'}</span></div><button className="top-add" onClick={()=>editEntry()} disabled={!book}><Plus size={17}/> 记一笔</button><span className="top-avatar">家</span></header><div className="content">{(!online||pending>0||issue)&&<div className="notice global" role="status"><span>{[!online&&'离线模式',pending>0&&'待同步 '+pending+' 项更改',issue||(!online&&(complete?'可继续记账':'本月仅显示本机已有记录，可继续记账'))].filter(Boolean).join(' · ')}</span>{online&&issue&&<button type="button" onClick={refresh}>重试</button>}</div>}{notice&&<div className="notice global" role="status">{notice}<button onClick={()=>setNotice('')} aria-label="关闭提示"><X size={16}/></button></div>}{!book?<section className="welcome"><h1>创建家庭账本</h1><p>创建一个家庭账本，邀请家人一起记录生活。</p><button className="primary" disabled={!online||!db} onClick={()=>setModal('book')}><Plus size={18}/> 创建家庭账本</button></section>:<>{page==='settings'?<><div className="page-heading"><div><h1>账本设置</h1><p>管理你的家庭账本与账户。</p></div></div><ThemePicker {...appearance}/><section className="panel settings-panel"><h2>家庭账本</h2><label>当前账本<select value={book.id} onChange={e=>setBook(books.find(b=>b.id===e.target.value)||null)}>{books.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label><button className="outline" disabled={!online||!db} onClick={()=>setModal('book')}><Plus size={16}/> 创建新账本</button>{book.owner_id===session.user.id&&<div className="invite"><h3>邀请家人一起记账</h3><p>邀请链接 7 天内有效，仅可使用一次。</p><button className="outline" disabled={!online||!db} onClick={createInvite}><Users size={16}/> 生成邀请链接</button>{invite&&<><input readOnly value={invite} aria-label="邀请链接"/><button className="text-button" onClick={()=>navigator.clipboard.writeText(invite).then(()=>setNotice('邀请链接已复制。')).catch(()=>setNotice('复制失败，请手动复制链接。'))}>复制链接</button></>}</div>}<div className="invite"><h3>家庭成员 <span className="member-count">{members.length} 人</span></h3><p>成员可以查看和管理共享账目。</p><div className="members">{members.map(m=><div className="member-row" key={m.user_id}><span className="avatar">{m.email.slice(0,1).toUpperCase()}</span><span className="member-info"><strong>{m.email}</strong><small>{m.is_owner?'创建者':m.user_id===session.user.id?'我 · 成员':'成员'}</small></span>{!m.is_owner&&(book.owner_id===session.user.id||m.user_id===session.user.id)&&<button className="text-button member-remove" onClick={()=>removeMember(m)}>{m.user_id===session.user.id?'退出账本':'移除'}</button>}</div>)}</div></div></section><section className="panel settings-panel"><h2>数据备份</h2><p>将当前家庭账本的全部记录导出为 CSV 文件。</p><button className="outline" onClick={exportEntries} disabled={exporting||!online||!db}>{exporting?'正在导出…':'导出全部账目'}</button></section><section className="panel settings-panel"><h2>账户</h2><p>{session.user.email}</p><button className="outline" disabled={!online||!db} onClick={()=>db?.auth.signOut()}><LogOut size={16}/> 退出登录</button></section></>:<><div className="page-heading"><div><h1>{page==='home'?'月度总览':page==='records'?'收支明细':'收支统计'}</h1></div><div className="month-switch"><button onClick={()=>setMonth(changeMonth(month,-1))} aria-label="上个月"><ChevronLeft size={18}/></button><CalendarDays size={16}/><strong>{monthLabel(month)}</strong><button onClick={()=>setMonth(changeMonth(month,1))} aria-label="下个月"><ChevronRight size={18}/></button></div></div>{monthUnavailable ? <section className="panel month-placeholder" role="status"><strong aria-hidden="true">—</strong><p>{monthMessage}</p></section> : <>{page==='home'&&<>
+ return <div className="app"><aside className="sidebar"><Brand/><div className="workspace"><span className="workspace-icon"><Home size={18}/></span><span><small>当前账本</small><strong>{book?.name||'我的家庭'}</strong></span></div><nav>{nav.map(n=><button key={n.id} className={page===n.id?'active':''} aria-current={page===n.id?'page':undefined} onClick={()=>navigate(n.id)}><n.icon size={19}/>{n.label}</button>)}</nav><div className="sidebar-bottom"><span className="avatar">家</span><span><strong>家庭成员</strong><small>{session.user.email}</small></span></div></aside><main className="main"><header className="topbar"><div className="mobile-brand"><Brand/></div><span className="mobile-book">{book?.name}</span><div className="top-title">{page==='home'?'账本总览':page==='records'?'收支明细':page==='stats'?'收支统计':'账本设置'} <span>/ {book?.name||'我的家庭'}</span></div><button className="top-add" onClick={()=>editEntry()} disabled={!book}><Plus size={17}/> 记一笔</button><span className="top-avatar">家</span></header><div className="content">{(!online||pending>0||issue)&&<div className="notice global" role="status"><span>{[!online&&'离线模式',pending>0&&'待同步 '+pending+' 项更改',issue||(!online&&(complete?'可继续记账':'本月仅显示本机已有记录，可继续记账'))].filter(Boolean).join(' · ')}</span>{online&&issue&&<button type="button" onClick={refresh}>重试</button>}</div>}{notice&&<div className="notice global" role="status">{notice}<button onClick={()=>setNotice('')} aria-label="关闭提示"><X size={16}/></button></div>}{!book?<section className="welcome"><h1>创建家庭账本</h1><p>创建一个家庭账本，邀请家人一起记录生活。</p><button className="primary" disabled={!online||!db} onClick={()=>setModal('book')}><Plus size={18}/> 创建家庭账本</button></section>:<>{page==='settings'?<React.Suspense fallback={<PageLoading/>}>
+ <SettingsPage appearance={appearance} book={book} books={books} user={session.user} connected={online && db !== null}
+  members={members} invite={invite} exporting={exporting} setBook={setBook} createBook={()=>setModal('book')}
+  createInvite={createInvite} removeMember={removeMember} exportEntries={exportEntries} setNotice={setNotice}
+  signOut={()=>db?.auth.signOut()}/>
+ </React.Suspense>:<><div className="page-heading"><div><h1>{page==='home'?'月度总览':page==='records'?'收支明细':'收支统计'}</h1></div><div className="month-switch"><button onClick={()=>setMonth(changeMonth(month,-1))} aria-label="上个月"><ChevronLeft size={18}/></button><CalendarDays size={16}/><strong>{monthLabel(month)}</strong><button onClick={()=>setMonth(changeMonth(month,1))} aria-label="下个月"><ChevronRight size={18}/></button></div></div>{monthUnavailable ? <section className="panel month-placeholder" role="status"><strong aria-hidden="true">—</strong><p>{monthMessage}</p></section> : <>{page==='home'&&<>
     <Overview entries={entries} income={income} expense={expense} month={month} budget={budget?.amount} complete={complete}
       onBudget={()=>{if(!online||!db){setNotice('请联网后调整月度预算。');return}setBudgetAmount(budget?String(budget.amount):'');setModal('budget')}}/>
     <div className="section-title"><h2>最近账目</h2><button className="text-button" onClick={()=>{clearFilters();navigate('records')}}>查看全部 <ChevronRight size={16}/></button></div>
     <Records highlightId={highlight?.id} entries={entries.slice(0,5)} edit={editEntry}/>
-  </>}{page==='records'&&<><div className="filters"><label className="filter-search"><span>搜索本月账目</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索店铺、备注、分类或金额"/></label><label><span>收支类型</span><select value={kindFilter} onChange={e=>setKindFilter(e.target.value)}><option value="all">全部收支</option><option value="expense">支出</option><option value="income">收入</option></select></label><label><span>分类</span><select value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)}><option value="all">全部分类</option>{filterCategories.map(c=><option key={c}>{c}</option>)}</select></label></div><div className="filter-count"><div className="filter-summary" role="status"><span>{hasFilters?`找到 ${filtered.length} 笔，共 ${entries.length} 笔`:`共 ${entries.length} 笔记录`}</span>{!complete && <span>仅按本机记录计算</span>}{hasFilters && <span>支出 {money(subtotals.expense)} · 收入 {money(subtotals.income)}</span>}</div>{hasFilters&&<button className="text-button" onClick={clearFilters}>清除筛选</button>}</div><Records highlightId={highlight?.id} entries={filtered} edit={editEntry} emptyText={entries.length?'没有符合条件的记录':'这个月还没有记录'}/></>}{page==='stats'&&<div className="stats-grid"><section className="panel"><h2>支出分类</h2><p className="muted">{complete ? '本月共支出' : '本机已记录支出'} <strong>{money(expense)}</strong></p>{groups.length ? <>
- <ExpensePie groups={groups} total={expense}/>
- {groups.map((group,index)=>{
-  const expanded=expenseCategory===group.name
-  const details = expanded ? entries.filter(entry => entry.kind === 'expense' && entry.category === group.name) : []
-  return <React.Fragment key={group.name}>
-   <button type="button" className="expense-category" aria-expanded={expanded} onClick={()=>setExpenseCategory(expanded?'':group.name)}>
-    <span className="pie-key" style={{background:pieColors[index % pieColors.length]}}/>
-    <strong>{group.name}</strong><span>{expensePercent.format(group.total/expense)}</span><b>{money(group.total)}</b><ChevronRight size={16}/>
-   </button>
-   {expanded&&<div className="expense-details"><Records highlightId={highlight?.id} entries={details.slice(0,5)} edit={editEntry}/>
-    {details.length > 5 && <button className="text-button more-records" onClick={() => {
-     setQuery(''); setKindFilter('expense'); setCategoryFilter(group.name); navigate('records')
-    }}>查看全部 {details.length} 笔<ChevronRight size={16}/></button>}</div>}
-  </React.Fragment>
- })}
- </>:<Empty text="还没有支出记录"/>}</section><section className="panel"><h2>{complete ? '本月收支' : '本机已记录收支'}</h2><div className="summary-line"><span>收入</span><strong>{money(income)}</strong></div><div className="summary-line"><span>支出</span><strong>{money(expense)}</strong></div><div className="summary-line"><span>结余</span><strong>{money(income-expense)}</strong></div></section></div>}</>}</>}</>}</div></main><nav className="mobile-nav">{nav.slice(0,2).map(n=><button key={n.id} aria-current={page===n.id?'page':undefined} onClick={()=>navigate(n.id)} className={page===n.id?'active':''}><n.icon size={20}/>{n.label}</button>)}<button className="mobile-plus" onClick={()=>editEntry()} disabled={!book} aria-label="记一笔"><Plus size={22}/><span>记一笔</span></button>{nav.slice(2).map(n=><button key={n.id} aria-current={page===n.id?'page':undefined} onClick={()=>navigate(n.id)} className={page===n.id?'active':''}><n.icon size={20}/>{n.label}</button>)}</nav>{receiptNotice && <div className="saved-toast" role="status"><Check size={18} aria-hidden="true"/>{receiptNotice}<button type="button" aria-label="关闭提示" onClick={()=>setReceiptNotice('')}><X size={16}/></button></div>}{modal&&<LedgerDialog title={modal==='entry'?(editing?'编辑记录':'记一笔'):modal==='budget'?'设置月度预算':'创建家庭账本'} closing={closingEntry} close={closeDialog}>
+  </>}{page==='records'&&<><div className="filters"><label className="filter-search"><span>搜索本月账目</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索店铺、备注、分类或金额"/></label><label><span>收支类型</span><select value={kindFilter} onChange={e=>setKindFilter(e.target.value)}><option value="all">全部收支</option><option value="expense">支出</option><option value="income">收入</option></select></label><label><span>分类</span><select value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)}><option value="all">全部分类</option>{filterCategories.map(c=><option key={c}>{c}</option>)}</select></label></div><div className="filter-count"><div className="filter-summary" role="status"><span>{hasFilters?`找到 ${filtered.length} 笔，共 ${entries.length} 笔`:`共 ${entries.length} 笔记录`}</span>{!complete && <span>仅按本机记录计算</span>}{hasFilters && <span>支出 {money(subtotals.expense)} · 收入 {money(subtotals.income)}</span>}</div>{hasFilters&&<button className="text-button" onClick={clearFilters}>清除筛选</button>}</div><Records highlightId={highlight?.id} entries={filtered} edit={editEntry} emptyText={entries.length?'没有符合条件的记录':'这个月还没有记录'}/></>}{page==='stats'&&<React.Suspense fallback={<PageLoading/>}>
+  <StatsPage entries={entries} income={income} expense={expense} complete={complete} expenseCategory={expenseCategory}
+   setExpenseCategory={setExpenseCategory} highlightId={highlight?.id} editEntry={editEntry}
+   showRecords={category=>{setQuery('');setKindFilter('expense');setCategoryFilter(category);navigate('records')}}/>
+ </React.Suspense>}</>}</>}</>}</div></main><nav className="mobile-nav">{nav.slice(0,2).map(n=><button key={n.id} aria-current={page===n.id?'page':undefined} onClick={()=>navigate(n.id)} className={page===n.id?'active':''}><n.icon size={20}/>{n.label}</button>)}<button className="mobile-plus" onClick={()=>editEntry()} disabled={!book} aria-label="记一笔"><Plus size={22}/><span>记一笔</span></button>{nav.slice(2).map(n=><button key={n.id} aria-current={page===n.id?'page':undefined} onClick={()=>navigate(n.id)} className={page===n.id?'active':''}><n.icon size={20}/>{n.label}</button>)}</nav>{receiptNotice && <div className="saved-toast" role="status"><Check size={18} aria-hidden="true"/>{receiptNotice}<button type="button" aria-label="关闭提示" onClick={()=>setReceiptNotice('')}><X size={16}/></button></div>}{modal&&<LedgerDialog title={modal==='entry'?(editing?'编辑记录':'记一笔'):modal==='budget'?'设置月度预算':'创建家庭账本'} closing={closingEntry} close={closeDialog}>
   {!closingEntry&&notice&&<div className="notice dialog-notice" role="status">{notice}</div>}{modal==='entry'?<form className="entry-form" onSubmit={saveEntry}>
   <div className="entry-scroll">
   {resumed && <div className="draft-note"><span>已恢复上次填写的内容</span><button type="button" disabled={busy||scanning} onClick={discardDraft}>丢弃草稿</button></div>}
@@ -305,17 +309,7 @@ function App({ appearance, session, db, online, recovery, finishRecovery }: {
 <label>备注（选填）<input maxLength={200} value={note} onChange={e=>changeForm({note:e.target.value})} placeholder="写点什么吧"/></label>{editing&&<button className="delete" type="button" onClick={removeEntry}><Trash2 size={16}/> 删除记录</button>}
   </fieldset></div><div className="entry-save"><button className="primary wide" disabled={busy||scanning}><Check size={18}/>{busy?'正在保存…':'保存记录'}</button></div></form>:modal==='budget'?<form onSubmit={saveBudget}><p className="muted">为 {monthLabel(month)} 设定一个家庭支出目标。</p><label>预算金额（日元）<input type="number" min="0" max="2147483647" step="1" required value={budgetAmount} onChange={e=>setBudgetAmount(e.target.value)} placeholder="0"/></label><button className="primary wide">保存预算</button></form>:<form onSubmit={createBook}><p className="muted">给你们共同的生活空间起个名字。</p><label>账本名称<input required maxLength={40} value={bookName} onChange={e=>setBookName(e.target.value)} placeholder="例如：我们的家"/></label><button className="primary wide">创建账本</button></form>}</LedgerDialog>}</div>
 }
-const pieColors = ['#315f4b','#ba6943','#6380a3','#b28b37','#795d93','#397e82','#aa5471','#69764a']
-const expensePercent = new Intl.NumberFormat('zh-CN',{style:'percent',maximumFractionDigits:1})
-function ExpensePie({groups,total}:{groups:{name:string;total:number}[];total:number}) {
- let end=0
- const stops=groups.map((group,index)=>{
-  const start=end
-  end+=group.total/total*100
-  return `${pieColors[index % pieColors.length]} ${start}% ${index===groups.length-1?100:end}%`
- })
- return <div className="expense-pie" aria-hidden="true" style={{background:groups.length===1?pieColors[0]:`conic-gradient(${stops.join(', ')})`}}/>
-}
+function PageLoading(){return <p className="muted" role="status">正在加载…</p>}
 function Brand(){return <div className="brand"><span className="brand-mark">柴</span><span><strong>柴米账本</strong><small>CHAIMI</small></span></div>}
 createRoot(document.getElementById('root')!).render(<Bootstrap/>)
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
