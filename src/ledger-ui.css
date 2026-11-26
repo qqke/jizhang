@@ -83,7 +83,9 @@ button, summary { touch-action: manipulation; }
 .category-icon[data-category="工资收入"] { color: #30684b; background: #e3efe2; }
 .empty { display: grid; justify-items: center; gap: 10px; color: var(--muted); }
 .filters { background: white; padding: 15px; margin: 0; border: 1px solid var(--line); border-radius: 13px; }
-.filter-count { min-height: 44px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--muted); margin: 0; }
+.filter-count { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); margin: 0; }
+.filter-summary { display: flex; flex-wrap: wrap; gap: 4px 12px; padding-block: 6px; }
+.filter-count button { flex: none; }
 .expense-category { min-height: 48px; }
 .stats-grid { align-items: start; }
 .expense-pie { border: 1px solid #0001; }

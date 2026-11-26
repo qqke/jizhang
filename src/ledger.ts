@@ -1,4 +1,12 @@
 export type LedgerEntry = { kind: 'expense' | 'income'; amount: number; category: string; note: string; merchant?: string; occurred_on: string }
+export function sumEntries(entries: LedgerEntry[]) {
+ let expense = 0, income = 0
+ for (const entry of entries) {
+  if (entry.kind === 'expense') expense += entry.amount
+  else income += entry.amount
+ }
+ return { expense, income }
+}
 export function filterEntries<T extends LedgerEntry>(entries: T[], query: string, kind: string, category: string): T[] {
  const q = query.trim().toLocaleLowerCase()
  return entries.filter(e => (kind === 'all' || e.kind === kind) && (category === 'all' || e.category === category) && (!q || `${e.category} ${e.note} ${e.amount} ${e.merchant ?? ''}`.toLocaleLowerCase().includes(q)))

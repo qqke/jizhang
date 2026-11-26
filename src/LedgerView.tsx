@@ -8,9 +8,8 @@ import type { LedgerEntry } from './ledger'
 
 const categoryIcons = {
   '餐饮美食': Utensils, '日常购物': ShoppingBag, '交通出行': TrainFront, '居家生活': House,
-  '休闲娱乐': Gamepad2, '医疗健康': HeartPulse, '工资收入': Banknote, '其他': Shapes,
+  '休闲娱乐': Gamepad2, '医疗健康': HeartPulse, '工资收入': Banknote, '其他收入': Banknote, '其他': Shapes,
 }
-export const categories = Object.keys(categoryIcons)
 const yen = new Intl.NumberFormat('ja-JP')
 let weekday: Intl.DateTimeFormat | undefined
 function weekdayLabel(date: string) {
@@ -53,8 +52,8 @@ export function Records<T extends LedgerEntry & { id: string }>({ entries, edit,
     </section>)}</div>
 }
 
-export function Overview({ entries, income, expense, month, budget, onBudget }: {
-  entries: LedgerEntry[]; income: number; expense: number; month: string; budget: number | undefined; onBudget: () => void
+export function Overview({ entries, income, expense, month, budget, complete, onBudget }: {
+  entries: LedgerEntry[]; income: number; expense: number; month: string; budget: number | undefined; complete: boolean; onBudget: () => void
 }) {
   const days = new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0).getDate()
   const totals = Array<number>(days).fill(0)
@@ -66,7 +65,7 @@ export function Overview({ entries, income, expense, month, budget, onBudget }: 
   const spent = budget ? Math.min(100, expense / budget * 100) : overBudget ? 100 : 0
   return <div className="overview">
     <section className="overview-main">
-      <div className="balance-block"><span>月度结余</span><strong className="balance">{money(income - expense)}</strong></div>
+      <div className="balance-block"><span>{complete ? '月度结余' : '本机记录结余'}</span><strong className="balance">{money(income - expense)}</strong></div>
       <figure className="daily-chart" aria-label={`每日支出，单日最高 ${money(peak)}`}>
         <figcaption>每日支出</figcaption><div className="daily-bars" aria-hidden="true">
           {totals.map((total, index) => <i key={index} data-empty={total === 0}
@@ -80,11 +79,12 @@ export function Overview({ entries, income, expense, month, budget, onBudget }: 
     </section>
     <section className="budget-card" data-over={overBudget}>
       <div className="card-heading"><h2><Wallet size={18}/> 月度预算</h2>
-        <button className="text-button" onClick={onBudget}><Pencil size={14}/>{budget === undefined ? '设置预算' : '调整预算'}</button></div>
-      <div className="budget-number">{budget === undefined ? '尚未设置' : money(Math.abs(budget - expense))}
+        {complete && <button className="text-button" onClick={onBudget}><Pencil size={14}/>{budget === undefined ? '设置预算' : '调整预算'}</button>}</div>
+      {complete ? <><div className="budget-number">{budget === undefined ? '尚未设置' : money(Math.abs(budget - expense))}
         {budget !== undefined && <small>{overBudget ? '已超支' : '可用'}</small>}</div>
       <div className="progress"><span style={{ width: spent + '%' }}/></div>
-      <div className="budget-meta"><span>已用 {money(expense)}</span><span>预算 {budget === undefined ? '—' : money(budget)}</span></div>
+      <div className="budget-meta"><span>已用 {money(expense)}</span><span>预算 {budget === undefined ? '—' : money(budget)}</span></div></>
+      : <div className="budget-number">{money(expense)}<small>本机已记录支出</small></div>}
     </section>
   </div>
 }

@@ -4,11 +4,11 @@ import { savedIdentity, url, key, type Identity } from './connection'
 import { enqueue, queued, applyChange, readPreference, writePreference, type Book, type Entry } from './local-ledger'
 import { changeMonth, remoteEntries, useLocalLedger } from './useLocalLedger'
 import { BarChart3, BookOpen, CalendarDays, Check, ChevronLeft, ChevronRight, Home, LogOut, Plus, ScanLine, Settings, Trash2, Users, X } from 'lucide-react'
-import { entryForm, fillReceipt, type EntryForm } from './entry-form'
-import { filterEntries, csvText } from './ledger'
+import { categoriesFor, entryCategories, entryForm, fillReceipt, switchKind, type EntryForm } from './entry-form'
+import { filterEntries, csvText, sumEntries } from './ledger'
 
 import { ThemePicker, useDeviceTheme } from './ThemePicker'
-import { AuthIllustration, CategoryIcon, Empty, LedgerDialog, Overview, Records, categories, money } from './LedgerView'
+import { AuthIllustration, CategoryIcon, Empty, LedgerDialog, Overview, Records, money } from './LedgerView'
 import './style.css'
 import './ledger-ui.css'
 
@@ -79,13 +79,14 @@ function App({ appearance, session, db, online, recovery, finishRecovery }: {
  const [book,setBook]=useState<Book|null>(()=>books.find(b=>b.id===readPreference(selectedKey,'')) || books[0] || null)
  const [month,setMonth]=useState(localDate().slice(0,7)), [page,setPage]=useState<'home'|'records'|'stats'|'settings'>('home'), [modal,setModal]=useState<'entry'|'budget'|'book'|null>(null)
  const [editing,setEditing]=useState<Entry|null>(null)
- const [form,setForm]=useState(() => entryForm(localDate(), '', categories[0]))
+ const [form,setForm]=useState(() => entryForm(localDate(), '', entryCategories.expense[0]))
  const { kind, amount, category, note, date, merchant, customMerchant } = form
  const [budgetAmount,setBudgetAmount]=useState('')
  const [bookName,setBookName]=useState(''), [invite,setInvite]=useState('')
  const [merchants,setMerchants]=useState<string[]>([])
  const drafts = useRef(new Map<string, EntryForm>())
  const initialForm = useRef(form)
+ const currentForm = useRef(form)
  const formKey = useRef('')
  const formBook = useRef('')
  const [resumed,setResumed] = useState(false)
@@ -112,8 +113,23 @@ function App({ appearance, session, db, online, recovery, finishRecovery }: {
   const timer = window.setTimeout(() => setReceiptNotice(''), 5000)
   return () => window.clearTimeout(timer)
  }, [receiptNotice])
+ function clearDraft(key: string) {
+  drafts.current.delete(key)
+  try { localStorage.removeItem(key) } catch {}
+ }
+ function updateDraft(next: EntryForm) {
+  currentForm.current = next
+  setForm(next)
+  if (JSON.stringify(initialForm.current) === JSON.stringify(next)) {
+   clearDraft(formKey.current)
+  } else {
+   drafts.current.set(formKey.current, next)
+   writePreference(formKey.current, next)
+  }
+ }
  function changeForm(patch: Partial<EntryForm>, manual?: keyof EntryForm['manual']) {
-  setForm(previous => ({ ...previous, ...patch, manual: manual ? { ...previous.manual, [manual]: true } : previous.manual }))
+  const previous = currentForm.current
+  updateDraft({ ...previous, ...patch, manual: manual ? { ...previous.manual, [manual]: true } : previous.manual })
  }
  useEffect(()=>{
   if(modal!=='entry'||!book)return
@@ -151,26 +167,34 @@ function App({ appearance, session, db, online, recovery, finishRecovery }: {
  async function exportEntries() { if(!book||!db||!online)return; setExporting(true); try { const rows=await navigator.locks.request('chaimi-sync:'+owner,async()=>{let rows=await remoteEntries(db,book.id);for(const change of await queued(owner))if(change.entry.book_id===book.id)rows=applyChange(rows,change);return rows.sort((a,b)=>b.occurred_on.localeCompare(a.occurred_on))}); const file=new Blob([csvText(rows)],{type:'text/csv;charset=utf-8'}); const href=URL.createObjectURL(file); const link=document.createElement('a'); link.href=href; link.download=`柴米账本-${localDate()}.csv`; link.click(); setTimeout(()=>URL.revokeObjectURL(href),1000); setNotice(`已导出 ${rows.length} 条记录。`) } catch { setNotice('导出失败，请检查网络后重试。') } finally {setExporting(false)} }
  const filtered=useMemo(()=>page==='records'?filterEntries(entries,query,kindFilter,categoryFilter):[],[page,entries,query,kindFilter,categoryFilter])
 
- const {expense,income}=useMemo(()=>{
-  let expense=0, income=0
-  for(const entry of entries){if(entry.kind==='expense')expense+=entry.amount;else income+=entry.amount}
-  return {expense,income}
- },[entries])
+ const {expense,income}=useMemo(()=>sumEntries(entries),[entries])
+ const subtotals=useMemo(()=>sumEntries(filtered),[filtered])
+ const filterCategories=useMemo(()=>[...new Set([
+  ...entryCategories.expense, ...entryCategories.income, ...entries.map(entry=>entry.category),
+ ])],[entries])
  const [expenseCategory,setExpenseCategory]=useState('')
  const merchantKey = `jz:last-merchant:${session?.user.id}:${book?.id}`
- const groups=useMemo(()=>page!=='stats'?[]:categories.map(name=>({name,total:entries.filter(e=>e.kind==='expense'&&e.category===name).reduce((a,e)=>a+e.amount,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total),[page,entries])
+ const groups=useMemo(()=>{
+  if(page!=='stats')return []
+  const totals=new Map<string,number>()
+  for(const entry of entries)if(entry.kind==='expense'){
+   totals.set(entry.category,(totals.get(entry.category)??0)+entry.amount)
+  }
+  return Array.from(totals,([name,total])=>({name,total})).sort((a,b)=>b.total-a.total)
+ },[page,entries])
  async function auth(e:React.FormEvent) { e.preventDefault(); if(!db)return; setBusy(true); setNotice(''); let error; if(authMode==='login') ({error}=await db.auth.signInWithPassword({email,password})); else if(authMode==='signup') { const r=await db.auth.signUp({email,password,options:{emailRedirectTo:location.href}}); error=r.error; if(!error)setNotice('注册成功，请检查邮箱中的确认邮件。') } else if(authMode==='forgot') { const r=await db.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});error=r.error;if(!error)setNotice('重置链接已发送，请检查邮箱。') } else { const r=await db.auth.updateUser({password});error=r.error;if(!error){setNotice('密码已更新。');finishRecovery();setAuthMode('login')} } if(error)setNotice(error.message); setBusy(false) }
  function editEntry(entry?: Entry) {
   if (!book) return
   let lastMerchant = ''
   try { lastMerchant = localStorage.getItem(merchantKey) || '' } catch {}
-  const initial = entryForm(localDate(), lastMerchant, categories[0], entry)
+  const initial = entryForm(localDate(), lastMerchant, entryCategories.expense[0], entry)
   formBook.current = book.id
-  formKey.current = JSON.stringify([book.id, entry?.id ?? 'new'])
+  formKey.current = 'jz:entry-draft:' + JSON.stringify([owner, book.id, entry?.id ?? 'new'])
   initialForm.current = initial
-  const saved = drafts.current.get(formKey.current)
+  const saved = drafts.current.get(formKey.current) ?? readPreference<EntryForm | null>(formKey.current, null)
   setHighlight(null); setReceiptNotice('')
-  setForm(saved ?? initial)
+  currentForm.current = saved ?? initial
+  setForm(currentForm.current)
   setResumed(Boolean(saved)); setEditing(entry ?? null)
   setScanOpen(false); setScanning(false); setNotice(''); setModal('entry')
  }
@@ -181,21 +205,21 @@ function App({ appearance, session, db, online, recovery, finishRecovery }: {
  function closeDialog() {
   if (busy || closingEntry) return
   if (modal !== 'entry') { setModal(null); return }
-  if (JSON.stringify(initialForm.current) !== JSON.stringify(form)) drafts.current.set(formKey.current, form)
-  else drafts.current.delete(formKey.current)
   finishEntry()
  }
  function discardDraft() {
-  drafts.current.delete(formKey.current)
-  setForm(initialForm.current); setResumed(false); setScanOpen(false)
+  clearDraft(formKey.current)
+  currentForm.current = initialForm.current
+  setForm(currentForm.current); setResumed(false); setScanOpen(false)
  }
  async function persistEntry(action: 'insert' | 'update' | 'delete', entry: Entry) {
   if (busy || closingEntry || !session || book?.id !== formBook.current) return
   setBusy(true)
+  const draftKey = formKey.current
   try {
    await enqueue({ owner, action, entry, previousMonth: editing?.occurred_on.slice(0,7) })
    if (action === 'insert') { try { localStorage.setItem(merchantKey, entry.merchant) } catch {} }
-   drafts.current.delete(formKey.current)
+   clearDraft(draftKey)
    finishEntry()
    if (action !== 'delete') setMonth(entry.occurred_on.slice(0,7))
    setHighlight(action === 'delete' ? null : { id: entry.id })
@@ -211,6 +235,7 @@ function App({ appearance, session, db, online, recovery, finishRecovery }: {
   if (!book || !session || scanning || busy) return
   const n = Number(amount)
   if (!Number.isSafeInteger(n) || n <= 0 || n > 2147483647) { setNotice('请输入有效的日元整数金额。'); return }
+  if (!categoriesFor(kind, editing).includes(category)) { setNotice('请选择对应收支类型的分类。'); return }
   const entry: Entry = { id: editing?.id || crypto.randomUUID(), book_id: book.id, user_id: editing?.user_id || owner,
    kind, amount:n, category, note, merchant:merchant.trim(), occurred_on:date, created_at:editing?.created_at || new Date().toISOString() }
   void persistEntry(editing ? 'update' : 'insert', entry)
@@ -234,18 +259,18 @@ function App({ appearance, session, db, online, recovery, finishRecovery }: {
  function clearFilters() { setQuery(''); setKindFilter('all'); setCategoryFilter('all') }
  const nav=[{id:'home',label:'首页',icon:Home},{id:'records',label:'账目',icon:BookOpen},{id:'stats',label:'统计',icon:BarChart3},{id:'settings',label:'设置',icon:Settings}] as const
  return <div className="app"><aside className="sidebar"><Brand/><div className="workspace"><span className="workspace-icon"><Home size={18}/></span><span><small>当前账本</small><strong>{book?.name||'我的家庭'}</strong></span></div><nav>{nav.map(n=><button key={n.id} className={page===n.id?'active':''} aria-current={page===n.id?'page':undefined} onClick={()=>navigate(n.id)}><n.icon size={19}/>{n.label}</button>)}</nav><div className="sidebar-bottom"><span className="avatar">家</span><span><strong>家庭成员</strong><small>{session.user.email}</small></span></div></aside><main className="main"><header className="topbar"><div className="mobile-brand"><Brand/></div><span className="mobile-book">{book?.name}</span><div className="top-title">{page==='home'?'账本总览':page==='records'?'收支明细':page==='stats'?'收支统计':'账本设置'} <span>/ {book?.name||'我的家庭'}</span></div><button className="top-add" onClick={()=>editEntry()} disabled={!book}><Plus size={17}/> 记一笔</button><span className="top-avatar">家</span></header><div className="content">{(!online||pending>0||issue)&&<div className="notice global" role="status"><span>{[!online&&'离线模式',pending>0&&'待同步 '+pending+' 项更改',issue||(!online&&(complete?'可继续记账':'本月仅显示本机已有记录，可继续记账'))].filter(Boolean).join(' · ')}</span>{online&&issue&&<button type="button" onClick={refresh}>重试</button>}</div>}{notice&&<div className="notice global" role="status">{notice}<button onClick={()=>setNotice('')} aria-label="关闭提示"><X size={16}/></button></div>}{!book?<section className="welcome"><h1>创建家庭账本</h1><p>创建一个家庭账本，邀请家人一起记录生活。</p><button className="primary" disabled={!online||!db} onClick={()=>setModal('book')}><Plus size={18}/> 创建家庭账本</button></section>:<>{page==='settings'?<><div className="page-heading"><div><h1>账本设置</h1><p>管理你的家庭账本与账户。</p></div></div><ThemePicker {...appearance}/><section className="panel settings-panel"><h2>家庭账本</h2><label>当前账本<select value={book.id} onChange={e=>setBook(books.find(b=>b.id===e.target.value)||null)}>{books.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label><button className="outline" disabled={!online||!db} onClick={()=>setModal('book')}><Plus size={16}/> 创建新账本</button>{book.owner_id===session.user.id&&<div className="invite"><h3>邀请家人一起记账</h3><p>邀请链接 7 天内有效，仅可使用一次。</p><button className="outline" disabled={!online||!db} onClick={createInvite}><Users size={16}/> 生成邀请链接</button>{invite&&<><input readOnly value={invite} aria-label="邀请链接"/><button className="text-button" onClick={()=>navigator.clipboard.writeText(invite).then(()=>setNotice('邀请链接已复制。')).catch(()=>setNotice('复制失败，请手动复制链接。'))}>复制链接</button></>}</div>}<div className="invite"><h3>家庭成员 <span className="member-count">{members.length} 人</span></h3><p>成员可以查看和管理共享账目。</p><div className="members">{members.map(m=><div className="member-row" key={m.user_id}><span className="avatar">{m.email.slice(0,1).toUpperCase()}</span><span className="member-info"><strong>{m.email}</strong><small>{m.is_owner?'创建者':m.user_id===session.user.id?'我 · 成员':'成员'}</small></span>{!m.is_owner&&(book.owner_id===session.user.id||m.user_id===session.user.id)&&<button className="text-button member-remove" onClick={()=>removeMember(m)}>{m.user_id===session.user.id?'退出账本':'移除'}</button>}</div>)}</div></div></section><section className="panel settings-panel"><h2>数据备份</h2><p>将当前家庭账本的全部记录导出为 CSV 文件。</p><button className="outline" onClick={exportEntries} disabled={exporting||!online||!db}>{exporting?'正在导出…':'导出全部账目'}</button></section><section className="panel settings-panel"><h2>账户</h2><p>{session.user.email}</p><button className="outline" disabled={!online||!db} onClick={()=>db?.auth.signOut()}><LogOut size={16}/> 退出登录</button></section></>:<><div className="page-heading"><div><h1>{page==='home'?'月度总览':page==='records'?'收支明细':'收支统计'}</h1></div><div className="month-switch"><button onClick={()=>setMonth(changeMonth(month,-1))} aria-label="上个月"><ChevronLeft size={18}/></button><CalendarDays size={16}/><strong>{monthLabel(month)}</strong><button onClick={()=>setMonth(changeMonth(month,1))} aria-label="下个月"><ChevronRight size={18}/></button></div></div>{monthUnavailable ? <section className="panel month-placeholder" role="status"><strong aria-hidden="true">—</strong><p>{monthMessage}</p></section> : <>{page==='home'&&<>
-    <Overview entries={entries} income={income} expense={expense} month={month} budget={budget?.amount}
+    <Overview entries={entries} income={income} expense={expense} month={month} budget={budget?.amount} complete={complete}
       onBudget={()=>{if(!online||!db){setNotice('请联网后调整月度预算。');return}setBudgetAmount(budget?String(budget.amount):'');setModal('budget')}}/>
     <div className="section-title"><h2>最近账目</h2><button className="text-button" onClick={()=>{clearFilters();navigate('records')}}>查看全部 <ChevronRight size={16}/></button></div>
     <Records highlightId={highlight?.id} entries={entries.slice(0,5)} edit={editEntry}/>
-  </>}{page==='records'&&<><div className="filters"><label className="filter-search"><span>搜索账目</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索店铺、备注、分类或金额"/></label><label><span>收支类型</span><select value={kindFilter} onChange={e=>setKindFilter(e.target.value)}><option value="all">全部收支</option><option value="expense">支出</option><option value="income">收入</option></select></label><label><span>分类</span><select value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)}><option value="all">全部分类</option>{categories.map(c=><option key={c}>{c}</option>)}</select></label></div><div className="filter-count" role="status"><span>{hasFilters?`找到 ${filtered.length} 笔，共 ${entries.length} 笔`:`共 ${entries.length} 笔记录`}</span>{hasFilters&&<button className="text-button" onClick={clearFilters}>清除筛选</button>}</div><Records highlightId={highlight?.id} entries={filtered} edit={editEntry} emptyText={entries.length?'没有符合条件的记录':'这个月还没有记录'}/></>}{page==='stats'&&<div className="stats-grid"><section className="panel"><h2>支出分类</h2><p className="muted">本月共支出 <strong>{money(expense)}</strong></p>{groups.length ? <>
+  </>}{page==='records'&&<><div className="filters"><label className="filter-search"><span>搜索本月账目</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索店铺、备注、分类或金额"/></label><label><span>收支类型</span><select value={kindFilter} onChange={e=>setKindFilter(e.target.value)}><option value="all">全部收支</option><option value="expense">支出</option><option value="income">收入</option></select></label><label><span>分类</span><select value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)}><option value="all">全部分类</option>{filterCategories.map(c=><option key={c}>{c}</option>)}</select></label></div><div className="filter-count"><div className="filter-summary" role="status"><span>{hasFilters?`找到 ${filtered.length} 笔，共 ${entries.length} 笔`:`共 ${entries.length} 笔记录`}</span>{!complete && <span>仅按本机记录计算</span>}{hasFilters && <span>支出 {money(subtotals.expense)} · 收入 {money(subtotals.income)}</span>}</div>{hasFilters&&<button className="text-button" onClick={clearFilters}>清除筛选</button>}</div><Records highlightId={highlight?.id} entries={filtered} edit={editEntry} emptyText={entries.length?'没有符合条件的记录':'这个月还没有记录'}/></>}{page==='stats'&&<div className="stats-grid"><section className="panel"><h2>支出分类</h2><p className="muted">{complete ? '本月共支出' : '本机已记录支出'} <strong>{money(expense)}</strong></p>{groups.length ? <>
  <ExpensePie groups={groups} total={expense}/>
  {groups.map((group,index)=>{
   const expanded=expenseCategory===group.name
   const details = expanded ? entries.filter(entry => entry.kind === 'expense' && entry.category === group.name) : []
   return <React.Fragment key={group.name}>
    <button type="button" className="expense-category" aria-expanded={expanded} onClick={()=>setExpenseCategory(expanded?'':group.name)}>
-    <span className="pie-key" style={{background:pieColors[index]}}/>
+    <span className="pie-key" style={{background:pieColors[index % pieColors.length]}}/>
     <strong>{group.name}</strong><span>{expensePercent.format(group.total/expense)}</span><b>{money(group.total)}</b><ChevronRight size={16}/>
    </button>
    {expanded&&<div className="expense-details"><Records highlightId={highlight?.id} entries={details.slice(0,5)} edit={editEntry}/>
@@ -254,17 +279,17 @@ function App({ appearance, session, db, online, recovery, finishRecovery }: {
     }}>查看全部 {details.length} 笔<ChevronRight size={16}/></button>}</div>}
   </React.Fragment>
  })}
- </>:<Empty text="还没有支出记录"/>}</section><section className="panel"><h2>本月收支</h2><div className="summary-line"><span>收入</span><strong>{money(income)}</strong></div><div className="summary-line"><span>支出</span><strong>{money(expense)}</strong></div><div className="summary-line"><span>结余</span><strong>{money(income-expense)}</strong></div></section></div>}</>}</>}</>}</div></main><nav className="mobile-nav">{nav.slice(0,2).map(n=><button key={n.id} aria-current={page===n.id?'page':undefined} onClick={()=>navigate(n.id)} className={page===n.id?'active':''}><n.icon size={20}/>{n.label}</button>)}<button className="mobile-plus" onClick={()=>editEntry()} disabled={!book} aria-label="记一笔"><Plus size={22}/><span>记一笔</span></button>{nav.slice(2).map(n=><button key={n.id} aria-current={page===n.id?'page':undefined} onClick={()=>navigate(n.id)} className={page===n.id?'active':''}><n.icon size={20}/>{n.label}</button>)}</nav>{receiptNotice && <div className="saved-toast" role="status"><Check size={18} aria-hidden="true"/>{receiptNotice}<button type="button" aria-label="关闭提示" onClick={()=>setReceiptNotice('')}><X size={16}/></button></div>}{modal&&<LedgerDialog title={modal==='entry'?(editing?'编辑记录':'记一笔'):modal==='budget'?'设置月度预算':'创建家庭账本'} closing={closingEntry} close={closeDialog}>
+ </>:<Empty text="还没有支出记录"/>}</section><section className="panel"><h2>{complete ? '本月收支' : '本机已记录收支'}</h2><div className="summary-line"><span>收入</span><strong>{money(income)}</strong></div><div className="summary-line"><span>支出</span><strong>{money(expense)}</strong></div><div className="summary-line"><span>结余</span><strong>{money(income-expense)}</strong></div></section></div>}</>}</>}</>}</div></main><nav className="mobile-nav">{nav.slice(0,2).map(n=><button key={n.id} aria-current={page===n.id?'page':undefined} onClick={()=>navigate(n.id)} className={page===n.id?'active':''}><n.icon size={20}/>{n.label}</button>)}<button className="mobile-plus" onClick={()=>editEntry()} disabled={!book} aria-label="记一笔"><Plus size={22}/><span>记一笔</span></button>{nav.slice(2).map(n=><button key={n.id} aria-current={page===n.id?'page':undefined} onClick={()=>navigate(n.id)} className={page===n.id?'active':''}><n.icon size={20}/>{n.label}</button>)}</nav>{receiptNotice && <div className="saved-toast" role="status"><Check size={18} aria-hidden="true"/>{receiptNotice}<button type="button" aria-label="关闭提示" onClick={()=>setReceiptNotice('')}><X size={16}/></button></div>}{modal&&<LedgerDialog title={modal==='entry'?(editing?'编辑记录':'记一笔'):modal==='budget'?'设置月度预算':'创建家庭账本'} closing={closingEntry} close={closeDialog}>
   {!closingEntry&&notice&&<div className="notice dialog-notice" role="status">{notice}</div>}{modal==='entry'?<form className="entry-form" onSubmit={saveEntry}>
   <div className="entry-scroll">
   {resumed && <div className="draft-note"><span>已恢复上次填写的内容</span><button type="button" disabled={busy||scanning} onClick={discardDraft}>丢弃草稿</button></div>}
-  <fieldset className="entry-fields" disabled={scanning||busy}><div className="segmented" role="group" aria-label="收支类型"><button type="button" aria-pressed={kind==='expense'} className={kind==='expense'?'selected':''} onClick={()=>{changeForm({kind:'expense',category:category==='工资收入'?categories[0]:category})}}>支出</button><button type="button" aria-pressed={kind==='income'} className={kind==='income'?'selected':''} onClick={()=>{changeForm({kind:'income',category:kind==='income'?category:'工资收入'})}}>收入</button></div><label className="amount-field">金额（日元）<span><b aria-hidden="true">¥</b><input data-initial-focus type="number" inputMode="numeric" min="1" max="2147483647" step="1" required value={amount} onChange={e=>changeForm({amount:e.target.value},'amount')} placeholder="0"/></span></label>
+  <fieldset className="entry-fields" disabled={scanning||busy}><div className="segmented" role="group" aria-label="收支类型"><button type="button" aria-pressed={kind==='expense'} className={kind==='expense'?'selected':''} onClick={()=>updateDraft(switchKind(currentForm.current, 'expense'))}>支出</button><button type="button" aria-pressed={kind==='income'} className={kind==='income'?'selected':''} onClick={()=>updateDraft(switchKind(currentForm.current, 'income'))}>收入</button></div><label className="amount-field">金额（日元）<span><b aria-hidden="true">¥</b><input data-initial-focus type="number" inputMode="numeric" min="1" max="2147483647" step="1" required value={amount} onChange={e=>changeForm({amount:e.target.value},'amount')} placeholder="0"/></span></label>
   <fieldset className="category-picker"><legend>分类</legend><div>
-    {categories.map(name=><button type="button" key={name} aria-pressed={category===name} onClick={()=>changeForm({category:name})}><CategoryIcon name={name}/>{name}</button>)}
+    {categoriesFor(kind, editing).map(name=><button type="button" key={name} aria-pressed={category===name} onClick={()=>changeForm({category:name})}><CategoryIcon name={name}/>{name}</button>)}
   </div></fieldset>
   </fieldset>
   {!editing&&<button className="scan-toggle" aria-expanded={scanOpen} type="button" disabled={scanning||busy} onClick={()=>setScanOpen(!scanOpen)}><ScanLine size={18}/>扫描小票<ChevronRight size={16}/></button>}
-  {scanOpen&&!editing&&<React.Suspense fallback={<p role="status">正在打开扫描…</p>}><ReceiptScanner disabled={busy} onBusy={setScanning} onResult={draft=>setForm(current=>fillReceipt(current,draft))}/></React.Suspense>}
+  {scanOpen&&!editing&&<React.Suspense fallback={<p role="status">正在打开扫描…</p>}><ReceiptScanner disabled={busy} onBusy={setScanning} onResult={draft=>updateDraft(fillReceipt(currentForm.current,draft))}/></React.Suspense>}
   <fieldset className="entry-fields" disabled={scanning||busy}>
   <label>日期<input type="date" required value={date} onChange={e=>changeForm({date:e.target.value},'date')}/></label><label>店铺（选填）
  <select value={manualMerchant?'custom':merchant?`shop:${merchant}`:''} onChange={e=>{
@@ -287,7 +312,7 @@ function ExpensePie({groups,total}:{groups:{name:string;total:number}[];total:nu
  const stops=groups.map((group,index)=>{
   const start=end
   end+=group.total/total*100
-  return `${pieColors[index]} ${start}% ${index===groups.length-1?100:end}%`
+  return `${pieColors[index % pieColors.length]} ${start}% ${index===groups.length-1?100:end}%`
  })
  return <div className="expense-pie" aria-hidden="true" style={{background:groups.length===1?pieColors[0]:`conic-gradient(${stops.join(', ')})`}}/>
 }
